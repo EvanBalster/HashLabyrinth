@@ -1,17 +1,27 @@
 #ifndef HAZE_HASH_H
 #define HAZE_HASH_H
 
-#include "seed.h"
+#include <cstdint>
 
 namespace haze
 {
-	uint32_t FastHash32(uint32_t v)
+	struct FastHash32
 	{
-		x = ((x >> 16) ^ x) * 0x45d9f3b;
-		x = ((x >> 16) ^ x) * 0x45d9f3b;
-		x =  (x >> 16) ^ x;
-		return x;
-	}
+		typedef uint32_t Hash;
+		
+		// Scalar hash.
+		static Hash Get(uint32_t x)
+		{
+			x = ((x >> 16) ^ x) * 0x45d9f3b;
+			x = ((x >> 16) ^ x) * 0x45d9f3b;
+			x =  (x >> 16) ^ x;
+			return x;
+		}
+		
+		Hash operator()(uint32_t x) const    {return Get(x);}
+	};
+	
+	
 }
 
 #endif
