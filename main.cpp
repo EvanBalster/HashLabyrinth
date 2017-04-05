@@ -14,29 +14,20 @@
 
 #include <cmath>
 
-#include "section.h"
+#include "seed_ring.h"
 
 namespace haze_test
 {
 	using namespace haze;
 	
-	struct Portal : public PortalBase32
+	struct Portal
 	{
-		Portal() {seed &= 0xFF;}
+		uint32_t seed;
 		
-		Portal(Seed _seed)
-		{
-			seed = _seed & 0xFF;
-		}
+		Portal() : seed(0) {}
 		
-		Portal otherSide() const
+		Portal(uint32_t _seed) : seed(_seed)
 		{
-			return *this;
-		}
-		
-		Portal complement(Hash throughSeedHash, unsigned offset) const
-		{
-			return Portal(seed ^ throughSeedHash);
 		}
 	
 		bool isWall() const
@@ -45,30 +36,44 @@ namespace haze_test
 			return (seed&7) < 5;  // || (seed&7) == 7;
 		}
 	};
+	
+	typedef SeedRing_<4> SeedRing;
 
-	struct Section : public Section_<Portal, 4>
+	struct Section
 	{
-		typedef Section_<Portal, 4> SectionBase;
-		
-		Section() :
-			SectionBase()
+		Section()
 		{
 		}
 		
 		Section(const Section &from, unsigned portalIndex) :
-			SectionBase(from, portalIndex)
+			seedRing(from.seedRing)
 		{
+			seedRing.traverse(portalIndex);
+			
+			limitRange();
+		}
+		
+		void limitRange()
+		{
+			for (auto &i : seedRing.seeds) i &= 0x1FF;
+		}
+		
+		Portal operator[](unsigned index) const
+		{
+			return Portal(seedRing[index]);
 		}
 	
 		bool operator==(const Section &other) const
 		{
-			return ringEquals(other);
+			return seedRing == other.seedRing;
 		}
 		
 		bool operator!=(const Section &other) const
 		{
-			return !ringEquals(other);
+			return seedRing != other.seedRing;
 		}
+		
+		SeedRing seedRing;
 	};
 }
 
@@ -77,17 +82,17 @@ namespace std
 	ostream &operator<<(ostream &out, const haze_test::Section &sec)
 	{
 		out
-			<< sec.portals[0].seed << ","
-			<< sec.portals[1].seed << ","
-			<< sec.portals[2].seed << ","
-			<< sec.portals[3].seed;
+			<< sec[0].seed << ","
+			<< sec[1].seed << ","
+			<< sec[2].seed << ","
+			<< sec[3].seed;
 		return out;
 	}
 	
 	template<>
 	struct hash<haze_test::Section>
 	{
-		size_t operator()(const haze_test::Section &k) const    {return k.ringHash();}
+		size_t operator()(const haze_test::Section &k) const    {return k.seedRing.hash();}
 	};
 }
 
@@ -125,9 +130,9 @@ namespace haze_test
 		}
 		
 		
-		void explore(const Section &section)
+		bool explore(const Section &section, bool countRetrace = false)
 		{
-			if (known.find(section) != known.end()) return;
+			if (known.find(section) != known.end()) return false;
 			
 			
 			unexplored.erase(section);
@@ -149,8 +154,8 @@ namespace haze_test
 			}
 			
 			// Note unexplored neighbors
-			for (unsigned i = 0; i < Section::PortalCount; ++i)
-				if (!section.portals[i].isWall())
+			for (unsigned i = 0; i < SeedRing::Size; ++i)
+				if (!section[i].isWall())
 			{
 				
 				Section neighbor(section, i);
@@ -163,15 +168,30 @@ namespace haze_test
 					//std::cout << "Noticed " << neighbor;
 					
 					// Sanity check
-					/*Section mirror(neighbor, i);
+					Section mirror(neighbor, i);
 					if (mirror != section)
 					{
 						std::cout << std::endl
-							<< "Failed symmetry test on section " << section.ringHash()
+							<< "Failed symmetry test on section " << section
+							<< "\n    ...Neighbor is " << neighbor
+							<< ", mirror is " << mirror
 							<< std::endl;
-						return;
-					}*/
+						return false;
+					}
 				}
+			}
+			
+			return true;
+		}
+		
+		void meander(Section section, unsigned count)
+		{
+			//unsigned lastPortal = 0;
+			
+			for (unsigned i = 0; i < count; ++i)
+			{
+				if (!explore(section)) ++nRetraced;
+				section = Section(section, rand()&3);
 			}
 		}
 		
@@ -223,9 +243,9 @@ namespace haze_test
 			}
 			
 			// Note unexplored neighbors
-			for (unsigned i = 0; i < Section::PortalCount; ++i)
+			for (unsigned i = 0; i < SeedRing::Size; ++i)
 			{
-				if (!section.portals[i].isWall())
+				if (!section[i].isWall())
 				{
 					Section neighbor(section, i);
 					
@@ -242,7 +262,7 @@ namespace haze_test
 							if (mirror != section)
 							{
 								std::cout << std::endl
-									<< "Failed symmetry test on section " << section.ringHash()
+									<< "Failed symmetry test on section " << section
 									<< std::endl;
 								return;
 							}
@@ -255,9 +275,9 @@ namespace haze_test
 			if (curDepth >= maxDepth) return;
 			
 			// Explore neighbors now!
-			for (unsigned i = 0; i < Section::PortalCount; ++i)
+			for (unsigned i = 0; i < SeedRing::Size; ++i)
 			{
-				if (!section.portals[i].isWall())
+				if (!section[i].isWall())
 				{
 					Section neighbor(section, i);
 					
@@ -271,9 +291,9 @@ namespace haze_test
 		{
 			++nSections;
 			unsigned nDoorsOrig = nDoors;
-			for (auto &portal : section.portals)
+			for (unsigned i = 0; i < SeedRing::Size; ++i)
 			{
-				if (portal.isWall()) ++nWalls; else ++nDoors;
+				if (section[i].isWall()) ++nWalls; else ++nDoors;
 			}
 			switch (nDoors - nDoorsOrig)
 			{
@@ -294,13 +314,14 @@ int main(int argc, const char * argv[])
 {
 	Section origin;
 	
-	srand(time(0));
+	srand(unsigned(time(0)));
 	
 	for (unsigned i = 0; i < 10; ++i)
 	{
-		for (auto &portal : origin.portals)
+		for (auto &seed : origin.seedRing.seeds)
 		{
-			portal = Portal(rand());
+			seed = SeedRing::Seed(rand());
+			origin.limitRange();
 		}
 
 		Explorer explorer;
@@ -312,6 +333,8 @@ int main(int argc, const char * argv[])
 		{
 			if (!explorer.exploreNextLayer()) break;
 		}
+		
+		//explorer.meander(origin, 1000000);
 		
 		std::cout << "\n    ...done.\n"
 			<< "  Explored:   " << std::setw(7) << explorer.nSections << "  "
